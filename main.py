@@ -10,7 +10,6 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Depe
 from fastapi.security.api_key import APIKeyHeader
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.sessions import SessionMiddleware
-from starlette.middleware.httpsredirect import HTTPSRedirectMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.requests import Request
 from starlette.responses import RedirectResponse
@@ -95,11 +94,10 @@ class APIClientAdmin(ModelView, model=APIClient):
 
     form_excluded_columns = [APIClient.created_at]
 
-    # ✅ CORRECTED LINE: Use 'validators=[]' instead of 'required=False'
+    # FIX: Use 'validators=[]' to allow empty API Key (auto-generation)
     form_args = dict(api_key=dict(validators=[]))
 
     async def on_model_change(self, data, model, is_created, request):
-        # Auto-generate key if left blank
         if is_created and not model.api_key:
             model.api_key = f"sk_live_{secrets.token_urlsafe(32)}"
 
@@ -123,7 +121,10 @@ async def lifespan(app: FastAPI):
 app = FastAPI(lifespan=lifespan)
 
 # -- MIDDLEWARE CONFIGURATION --
+# 1. Session (Required for Login)
 app.add_middleware(SessionMiddleware, secret_key=SECRET_KEY)
+
+# 2. CORS (Allow Web/App access)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -131,8 +132,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# 3. Trusted Host (Fixes UI not loading CSS behind Nginx)
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=["*"])
-app.add_middleware(HTTPSRedirectMiddleware)
+
+# ❌ REMOVED: HTTPSRedirectMiddleware (This was causing the loop!)
 
 # -- MOUNT ADMIN --
 admin = Admin(app, engine, authentication_backend=authentication_backend, title="NexoDynamix Admin")
