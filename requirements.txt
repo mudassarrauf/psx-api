@@ -3,3 +3,6 @@ uvicorn[standard]
 asyncpg
 psycopg2-binary
 python-dotenv
+sqladmin[full]  <-- NEW: Admin Panel
+sqlalchemy      <-- NEW: Required for Admin
+greenlet        <-- NEW: Required for Async SQLAlchemy

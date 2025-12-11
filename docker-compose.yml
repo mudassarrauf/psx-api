@@ -1,22 +1,40 @@
 version: '3.9'
 
 services:
+  # 1. THE API SERVICE
   psx-api:
-    container_name: psx-api
     build: .
+    container_name: psx-api
     restart: always
     ports:
-      - "8001:8000"  # Exposing 8001 externally just in case, or map via Nginx
+      - "8001:8000"
     environment:
-      # Connect to the EXISTING database container by its name
-      - POSTGRES_HOST=market-db
-      - POSTGRES_DB=market_data
-      - POSTGRES_USER=market_user
-      - POSTGRES_PASSWORD=MarketPass2025!
+      # Connection to MARKET DB (Read-Only access ideally)
+      - MARKET_DB_DSN=postgresql://market_user:MarketPass2025!@market-db/market_data
+      # Connection to NEW AUTH DB
+      - AUTH_DB_DSN=postgresql://auth_user:AuthPassSecret!@auth-db/auth_data
+    depends_on:
+      - auth-db
     networks:
       - proxy_net
 
-# Connect to the network that already exists (created by your worker stack)
+  # 2. NEW SEPARATE DATABASE FOR KEYS
+  auth-db:
+    image: postgres:15-alpine
+    container_name: auth-db
+    restart: always
+    environment:
+      - POSTGRES_DB=auth_data
+      - POSTGRES_USER=auth_user
+      - POSTGRES_PASSWORD=AuthPassSecret!
+    volumes:
+      - auth_db_data:/var/lib/postgresql/data
+    networks:
+      - proxy_net
+
+volumes:
+  auth_db_data: # Separate volume for auth data
+
 networks:
   proxy_net:
     external: true
