@@ -95,12 +95,12 @@ class APIClientAdmin(ModelView, model=APIClient):
     column_list = [APIClient.id, APIClient.client_name, APIClient.api_key, APIClient.is_active, APIClient.created_at]
     column_searchable_list = [APIClient.client_name, APIClient.api_key]
 
-    # CRITICAL: Commented out filters to prevent crash on some systems
+    # CRITICAL FIX: Commented out filters to prevent 500 Error crash
     # column_filters = [APIClient.is_active]
 
     form_excluded_columns = [APIClient.created_at]
 
-    # FIX: Allows you to leave API Key empty in the form
+    # FIX: Allows you to leave API Key empty in the form so it auto-generates
     form_args = dict(api_key=dict(required=False))
 
     async def on_model_change(self, data, model, is_created, request):
@@ -130,7 +130,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
-# -- MIDDLEWARE CONFIGURATION --
+# -- MIDDLEWARE CONFIGURATION (Fixes UI & HTTPS) --
 
 # 1. Session (Required for Admin Login)
 app.add_middleware(SessionMiddleware, secret_key=SECRET_KEY)
@@ -152,8 +152,7 @@ admin = Admin(
     app,
     engine,
     authentication_backend=authentication_backend,
-    title="NexoDynamix Admin",
-    # logo_url="OPTIONAL_LOGO_URL_HERE"
+    title="NexoDynamix Admin"
 )
 admin.add_view(APIClientAdmin)
 
