@@ -95,13 +95,13 @@ class APIClientAdmin(ModelView, model=APIClient):
     column_list = [APIClient.id, APIClient.client_name, APIClient.api_key, APIClient.is_active, APIClient.created_at]
     column_searchable_list = [APIClient.client_name, APIClient.api_key]
 
-    # CRITICAL FIX: Commented out filters to prevent 500 Error crash
+    # CRITICAL: Commented out filters to prevent crash on some systems
     # column_filters = [APIClient.is_active]
 
     form_excluded_columns = [APIClient.created_at]
 
-    # FIX: Allows you to leave API Key empty in the form so it auto-generates
-    form_args = dict(api_key=dict(required=False))
+    # FIX 1: Use 'validators=[]' to allow empty API Key (auto-generation)
+    form_args = dict(api_key=dict(validators=[]))
 
     async def on_model_change(self, data, model, is_created, request):
         # Auto-generate key if left blank
@@ -130,7 +130,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
-# -- MIDDLEWARE CONFIGURATION (Fixes UI & HTTPS) --
+# -- MIDDLEWARE CONFIGURATION (FIXES UI STYLING) --
 
 # 1. Session (Required for Admin Login)
 app.add_middleware(SessionMiddleware, secret_key=SECRET_KEY)
@@ -144,8 +144,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 3. Trusted Host (Helps Nginx Proxy Manager render UI correctly)
+# 3. Trusted Host (Fixes UI not loading CSS behind Nginx)
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=["*"])
+
+# 4. HTTPS Redirect (Ensures secure connection)
+app.add_middleware(HTTPSRedirectMiddleware)
 
 # -- MOUNT ADMIN --
 admin = Admin(
