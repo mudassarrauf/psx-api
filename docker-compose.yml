@@ -1,0 +1,23 @@
+version: '3.9'
+
+services:
+  psx-api:
+    container_name: psx-api
+    build: .
+    restart: always
+    ports:
+      - "8001:8000"  # Exposing 8001 externally just in case, or map via Nginx
+    environment:
+      # Connect to the EXISTING database container by its name
+      - POSTGRES_HOST=market-db
+      - POSTGRES_DB=market_data
+      - POSTGRES_USER=market_user
+      - POSTGRES_PASSWORD=MarketPass2025!
+    networks:
+      - proxy_net
+
+# Connect to the network that already exists (created by your worker stack)
+networks:
+  proxy_net:
+    external: true
+    name: shared_proxy_network
