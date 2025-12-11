@@ -13,6 +13,8 @@ services:
       - MARKET_DB_DSN=postgresql://market_user:MarketPass2025!@market-db/market_data
       # Connection to NEW AUTH DB
       - AUTH_DB_DSN=postgresql://auth_user:AuthPassSecret!@auth-db/auth_data
+      - ADMIN_USER=mudassar
+      - ADMIN_PASS=wykwYd-gehqyg-7xebva
     depends_on:
       - auth-db
     networks:
