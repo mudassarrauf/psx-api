@@ -4,17 +4,20 @@ import secrets
 import asyncpg
 from contextlib import asynccontextmanager
 from datetime import date as date_type
-from typing import Optional
+from typing import Optional, List
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Depends, Security, Query
 from fastapi.security.api_key import APIKeyHeader
-from starlette.middleware.sessions import SessionMiddleware  # <--- NEW: For Login Session
+from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.sessions import SessionMiddleware
+from starlette.middleware.httpsredirect import HTTPSRedirectMiddleware
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.requests import Request
 from starlette.responses import RedirectResponse
 
 # --- IMPORTS FOR ADMIN & ORM ---
 from sqladmin import Admin, ModelView
-from sqladmin.authentication import AuthenticationBackend  # <--- NEW: For Auth
+from sqladmin.authentication import AuthenticationBackend
 from sqlalchemy import Column, Integer, String, Boolean, DateTime, select, func
 from sqlalchemy.orm import sessionmaker, declarative_base
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
@@ -22,12 +25,13 @@ from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 # ==========================================
 # 1. CONFIGURATION
 # ==========================================
+# Database Connections
 MARKET_DB_DSN = os.getenv("MARKET_DB_DSN")
 AUTH_DB_DSN = os.getenv("AUTH_DB_DSN")
 
-# Admin Credentials (CHANGE THESE IN PRODUCTION ENV VARS IF YOU WANT)
+# Admin Panel Security
 ADMIN_USER = os.getenv("ADMIN_USER", "admin")
-ADMIN_PASS = os.getenv("ADMIN_PASS", "wykwYd-gehqyg-7xebva")
+ADMIN_PASS = os.getenv("ADMIN_PASS", "SuperSecretPass2025!")
 SECRET_KEY = os.getenv("SECRET_KEY", secrets.token_urlsafe(32))
 
 # Convert asyncpg DSN to SQLAlchemy Async DSN
@@ -58,14 +62,14 @@ class APIClient(Base):
 # 3. ADMIN PANEL SECURITY & CONFIG
 # ==========================================
 
-# -- A. Authentication Backend --
+# -- A. Login Logic --
 class AdminAuth(AuthenticationBackend):
     async def login(self, request: Request) -> bool:
         form = await request.form()
         username = form.get("username")
         password = form.get("password")
 
-        # Validate username/password
+        # Validate credentials
         if username == ADMIN_USER and password == ADMIN_PASS:
             request.session.update({"token": "logged_in"})
             return True
@@ -82,7 +86,7 @@ class AdminAuth(AuthenticationBackend):
 authentication_backend = AdminAuth(secret_key=SECRET_KEY)
 
 
-# -- B. The View --
+# -- B. The Admin View --
 class APIClientAdmin(ModelView, model=APIClient):
     name = "User Subscription"
     name_plural = "User Subscriptions"
@@ -91,12 +95,16 @@ class APIClientAdmin(ModelView, model=APIClient):
     column_list = [APIClient.id, APIClient.client_name, APIClient.api_key, APIClient.is_active, APIClient.created_at]
     column_searchable_list = [APIClient.client_name, APIClient.api_key]
 
-    # --- CRITICAL FIX: COMMENTED OUT FILTERS TO PREVENT CRASH ---
+    # CRITICAL: Commented out filters to prevent crash on some systems
     # column_filters = [APIClient.is_active]
 
     form_excluded_columns = [APIClient.created_at]
 
+    # FIX: Allows you to leave API Key empty in the form
+    form_args = dict(api_key=dict(required=False))
+
     async def on_model_change(self, data, model, is_created, request):
+        # Auto-generate key if left blank
         if is_created and not model.api_key:
             model.api_key = f"sk_live_{secrets.token_urlsafe(32)}"
 
@@ -111,7 +119,10 @@ async def init_auth_db():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # 1. Initialize Auth Tables
     await init_auth_db()
+
+    # 2. Start Market Data Listener
     task = asyncio.create_task(listen_to_postgres())
     yield
     task.cancel()
@@ -119,11 +130,31 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
-# -- Add Session Middleware (Required for Login) --
+# -- MIDDLEWARE CONFIGURATION --
+
+# 1. Session (Required for Admin Login)
 app.add_middleware(SessionMiddleware, secret_key=SECRET_KEY)
 
-# -- Mount Admin with Security --
-admin = Admin(app, engine, authentication_backend=authentication_backend)
+# 2. CORS (Allow Web/App access)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# 3. Trusted Host (Helps Nginx Proxy Manager render UI correctly)
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=["*"])
+
+# -- MOUNT ADMIN --
+admin = Admin(
+    app,
+    engine,
+    authentication_backend=authentication_backend,
+    title="NexoDynamix Admin",
+    # logo_url="OPTIONAL_LOGO_URL_HERE"
+)
 admin.add_view(APIClientAdmin)
 
 
@@ -132,7 +163,7 @@ admin.add_view(APIClientAdmin)
 # ==========================================
 class ConnectionManager:
     def __init__(self):
-        self.active_connections: list[WebSocket] = []
+        self.active_connections: List[WebSocket] = []
 
     async def connect(self, websocket: WebSocket):
         await websocket.accept()
@@ -155,17 +186,20 @@ manager = ConnectionManager()
 
 
 async def listen_to_postgres():
+    """Listens to 'stock_updates' channel on MARKET_DB"""
     try:
         conn = await asyncpg.connect(MARKET_DB_DSN)
         await conn.add_listener("stock_updates", lambda c, p, ch, pay: asyncio.create_task(manager.broadcast(pay)))
+        print("✅ Market Listener Active")
         while True:
             await asyncio.sleep(60)
     except Exception as e:
-        print(f"❌ Listener Error: {e}")
+        print(f"❌ Market Listener Error: {e}")
         await asyncio.sleep(5)
 
 
 async def validate_api_key(api_key: str) -> bool:
+    """Checks AUTH_DB to see if key is active"""
     if not api_key: return False
     async with async_session() as session:
         stmt = select(APIClient).where(APIClient.api_key == api_key)
@@ -183,33 +217,51 @@ async def get_api_key(api_key_header: str = Security(api_key_header)):
 # ==========================================
 # 6. ENDPOINTS
 # ==========================================
+
+@app.get("/")
+def home():
+    return {"status": "online", "service": "NexoDynamix API"}
+
+
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket, api_key: str = Query(...)):
+    # 1. Validate Key
     if not await validate_api_key(api_key):
-        await websocket.close(code=1008)
+        await websocket.close(code=1008)  # Policy Violation
         return
+
+    # 2. Accept Connection
     await manager.connect(websocket)
     try:
         while True:
-            await websocket.receive_text()
+            await websocket.receive_text()  # Keep open
     except:
         manager.disconnect(websocket)
 
 
 @app.get("/api/eod", dependencies=[Depends(get_api_key)])
 async def get_eod_price(ticker: str, date: str):
+    # 1. Parse Date
     try:
         date_obj = date_type.fromisoformat(date)
     except ValueError:
-        raise HTTPException(400, "Invalid Date")
-    conn = await asyncpg.connect(MARKET_DB_DSN)
+        raise HTTPException(400, "Invalid Date Format (YYYY-MM-DD)")
+
+    # 2. Fetch Data from Market DB
     try:
-        row = await conn.fetchrow(
-            "SELECT close_price, recorded_at FROM historical_prices WHERE ticker = $1 AND recorded_at = $2::date",
-            ticker, date_obj
-        )
-        if row:
-            return {"ticker": ticker, "date": str(row['recorded_at']), "price": float(row['close_price'])}
-        raise HTTPException(404, "Not found")
-    finally:
-        await conn.close()
+        conn = await asyncpg.connect(MARKET_DB_DSN)
+        try:
+            row = await conn.fetchrow(
+                "SELECT close_price, recorded_at FROM historical_prices WHERE ticker = $1 AND recorded_at = $2::date",
+                ticker, date_obj
+            )
+            if row:
+                return {"ticker": ticker, "date": str(row['recorded_at']), "price": float(row['close_price'])}
+            raise HTTPException(404, "Data not found")
+        finally:
+            await conn.close()
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        print(f"Server Error: {e}")
+        raise HTTPException(500, "Internal Server Error")
