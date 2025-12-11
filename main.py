@@ -25,7 +25,6 @@ from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 # ==========================================
 # 1. CONFIGURATION
 # ==========================================
-# Database Connections
 MARKET_DB_DSN = os.getenv("MARKET_DB_DSN")
 AUTH_DB_DSN = os.getenv("AUTH_DB_DSN")
 
@@ -62,14 +61,11 @@ class APIClient(Base):
 # 3. ADMIN PANEL SECURITY & CONFIG
 # ==========================================
 
-# -- A. Login Logic --
 class AdminAuth(AuthenticationBackend):
     async def login(self, request: Request) -> bool:
         form = await request.form()
         username = form.get("username")
         password = form.get("password")
-
-        # Validate credentials
         if username == ADMIN_USER and password == ADMIN_PASS:
             request.session.update({"token": "logged_in"})
             return True
@@ -86,7 +82,6 @@ class AdminAuth(AuthenticationBackend):
 authentication_backend = AdminAuth(secret_key=SECRET_KEY)
 
 
-# -- B. The Admin View --
 class APIClientAdmin(ModelView, model=APIClient):
     name = "User Subscription"
     name_plural = "User Subscriptions"
@@ -95,12 +90,12 @@ class APIClientAdmin(ModelView, model=APIClient):
     column_list = [APIClient.id, APIClient.client_name, APIClient.api_key, APIClient.is_active, APIClient.created_at]
     column_searchable_list = [APIClient.client_name, APIClient.api_key]
 
-    # CRITICAL: Commented out filters to prevent crash on some systems
+    # CRITICAL: Keep filters commented out to prevent 500 Error
     # column_filters = [APIClient.is_active]
 
     form_excluded_columns = [APIClient.created_at]
 
-    # FIX 1: Use 'validators=[]' to allow empty API Key (auto-generation)
+    # ✅ CORRECTED LINE: Use 'validators=[]' instead of 'required=False'
     form_args = dict(api_key=dict(validators=[]))
 
     async def on_model_change(self, data, model, is_created, request):
@@ -119,10 +114,7 @@ async def init_auth_db():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # 1. Initialize Auth Tables
     await init_auth_db()
-
-    # 2. Start Market Data Listener
     task = asyncio.create_task(listen_to_postgres())
     yield
     task.cancel()
@@ -130,12 +122,8 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
-# -- MIDDLEWARE CONFIGURATION (FIXES UI STYLING) --
-
-# 1. Session (Required for Admin Login)
+# -- MIDDLEWARE CONFIGURATION --
 app.add_middleware(SessionMiddleware, secret_key=SECRET_KEY)
-
-# 2. CORS (Allow Web/App access)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -143,20 +131,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# 3. Trusted Host (Fixes UI not loading CSS behind Nginx)
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=["*"])
-
-# 4. HTTPS Redirect (Ensures secure connection)
 app.add_middleware(HTTPSRedirectMiddleware)
 
 # -- MOUNT ADMIN --
-admin = Admin(
-    app,
-    engine,
-    authentication_backend=authentication_backend,
-    title="NexoDynamix Admin"
-)
+admin = Admin(app, engine, authentication_backend=authentication_backend, title="NexoDynamix Admin")
 admin.add_view(APIClientAdmin)
 
 
@@ -188,7 +167,6 @@ manager = ConnectionManager()
 
 
 async def listen_to_postgres():
-    """Listens to 'stock_updates' channel on MARKET_DB"""
     try:
         conn = await asyncpg.connect(MARKET_DB_DSN)
         await conn.add_listener("stock_updates", lambda c, p, ch, pay: asyncio.create_task(manager.broadcast(pay)))
@@ -201,7 +179,6 @@ async def listen_to_postgres():
 
 
 async def validate_api_key(api_key: str) -> bool:
-    """Checks AUTH_DB to see if key is active"""
     if not api_key: return False
     async with async_session() as session:
         stmt = select(APIClient).where(APIClient.api_key == api_key)
@@ -227,29 +204,23 @@ def home():
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket, api_key: str = Query(...)):
-    # 1. Validate Key
     if not await validate_api_key(api_key):
-        await websocket.close(code=1008)  # Policy Violation
+        await websocket.close(code=1008)
         return
-
-    # 2. Accept Connection
     await manager.connect(websocket)
     try:
         while True:
-            await websocket.receive_text()  # Keep open
+            await websocket.receive_text()
     except:
         manager.disconnect(websocket)
 
 
 @app.get("/api/eod", dependencies=[Depends(get_api_key)])
 async def get_eod_price(ticker: str, date: str):
-    # 1. Parse Date
     try:
         date_obj = date_type.fromisoformat(date)
     except ValueError:
         raise HTTPException(400, "Invalid Date Format (YYYY-MM-DD)")
-
-    # 2. Fetch Data from Market DB
     try:
         conn = await asyncpg.connect(MARKET_DB_DSN)
         try:
