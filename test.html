@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NexoDynamix API Tester</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; padding: 20px; background-color: #f4f4f9; color: #333; }
+        .container { max-width: 600px; margin: 0 auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        h2 { margin-top: 0; color: #2c3e50; }
+
+        /* Input Area */
+        .controls { margin-bottom: 20px; padding-bottom: 20px; border-bottom: 1px solid #eee; }
+        input[type="text"] { width: 70%; padding: 10px; border: 1px solid #ddd; border-radius: 4px; font-size: 16px; }
+        button { padding: 10px 20px; border: none; border-radius: 4px; cursor: pointer; font-size: 16px; font-weight: bold; }
+        .btn-connect { background-color: #27ae60; color: white; }
+        .btn-connect:hover { background-color: #219150; }
+        .btn-disconnect { background-color: #c0392b; color: white; display: none; }
+
+        /* Status Bar */
+        .status-bar { font-weight: bold; margin-bottom: 10px; }
+        .status-connected { color: #27ae60; }
+        .status-disconnected { color: #c0392b; }
+        .status-error { color: #e67e22; }
+
+        /* Logs */
+        .log-container { height: 300px; overflow-y: auto; background: #1e1e1e; color: #0f0; padding: 10px; border-radius: 4px; font-family: monospace; font-size: 13px; }
+        .log-entry { margin-bottom: 5px; border-bottom: 1px solid #333; padding-bottom: 2px; }
+        .log-time { color: #888; margin-right: 10px; }
+        .log-error { color: #ff4d4d; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h2>🚀 NexoDynamix Real-Time Test</h2>
+
+    <div class="controls">
+        <input type="text" id="apiKey" placeholder="Paste API Key (sk_live_...)" value="jfrdbhwquloerg9723hrdfcljebf97G2RUDBlibd939hdFEHKH329">
+        <button onclick="connect()" id="btnConnect" class="btn-connect">Connect</button>
+        <button onclick="disconnect()" id="btnDisconnect" class="btn-disconnect">Disconnect</button>
+    </div>
+
+    <div class="status-bar">
+        Status: <span id="status" class="status-disconnected">Disconnected</span>
+    </div>
+
+    <div class="log-container" id="logs">
+        <div class="log-entry">Waiting for connection...</div>
+    </div>
+</div>
+
+<script>
+    let ws = null;
+    const statusSpan = document.getElementById("status");
+    const logsDiv = document.getElementById("logs");
+    const btnConnect = document.getElementById("btnConnect");
+    const btnDisconnect = document.getElementById("btnDisconnect");
+    const inputKey = document.getElementById("apiKey");
+
+    function log(msg, isError = false) {
+        const time = new Date().toLocaleTimeString();
+        const div = document.createElement("div");
+        div.className = "log-entry" + (isError ? " log-error" : "");
+        div.innerHTML = `<span class="log-time">[${time}]</span> ${msg}`;
+        logsDiv.prepend(div);
+    }
+
+    function connect() {
+        const key = inputKey.value.trim();
+        if (!key) {
+            alert("Please enter an API Key first!");
+            return;
+        }
+
+        const url = `wss://api.nexodynamix.com/ws?api_key=${key}`;
+        log(`Attempting to connect...`);
+
+        ws = new WebSocket(url);
+
+        ws.onopen = function() {
+            statusSpan.textContent = "Connected ✅";
+            statusSpan.className = "status-connected";
+            log("Connection Established!");
+
+            // Toggle Buttons
+            btnConnect.style.display = "none";
+            btnDisconnect.style.display = "inline-block";
+            inputKey.disabled = true;
+        };
+
+        ws.onmessage = function(event) {
+            log("📩 Data: " + event.data);
+            // Flash the log container slightly to indicate activity
+            logsDiv.style.borderColor = "#0f0";
+            setTimeout(() => logsDiv.style.borderColor = "transparent", 200);
+        };
+
+        ws.onclose = function(event) {
+            handleDisconnect(event);
+        };
+
+        ws.onerror = function(error) {
+            statusSpan.textContent = "Error ⚠️";
+            statusSpan.className = "status-error";
+            log("WebSocket Error occurred.", true);
+        };
+    }
+
+    function disconnect() {
+        if (ws) {
+            ws.close();
+        }
+    }
+
+    function handleDisconnect(event) {
+        let reason = "Normal Closure";
+        if (event.code === 1008) reason = "⛔ Invalid API Key (Policy Violation)";
+        else if (event.code === 1006) reason = "Connection Lost (Server down or network error)";
+
+        statusSpan.textContent = "Disconnected ❌";
+        statusSpan.className = "status-disconnected";
+        log(`Connection Closed: ${reason} (Code: ${event.code})`, true);
+
+        // Reset UI
+        btnConnect.style.display = "inline-block";
+        btnDisconnect.style.display = "none";
+        inputKey.disabled = false;
+        ws = null;
+    }
+</script>
+
+</body>
+</html>

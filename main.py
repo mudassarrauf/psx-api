@@ -242,3 +242,31 @@ async def get_eod_price(ticker: str, date: str):
     except Exception as e:
         print(f"Server Error: {e}")
         raise HTTPException(500, "Internal Server Error")
+@app.get("/api/latest", dependencies=[Depends(get_api_key)])
+async def get_latest_price(ticker: str):
+    """
+    Fetches the absolute latest real-time price snapshot.
+    Perfect for Widgets that cannot keep a WebSocket open.
+    """
+    try:
+        conn = await asyncpg.connect(MARKET_DB_DSN)
+        try:
+            # Query the 'stocks' table for the current live price
+            row = await conn.fetchrow(
+                "SELECT live_price, last_updated FROM stocks WHERE ticker = $1",
+                ticker
+            )
+            if row:
+                return {
+                    "ticker": ticker,
+                    "price": float(row['live_price']),
+                    "updated_at": str(row['last_updated'])
+                }
+            raise HTTPException(404, "Ticker not found")
+        finally:
+            await conn.close()
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        print(f"Server Error: {e}")
+        raise HTTPException(500, "Internal Server Error")
