@@ -139,7 +139,13 @@ app.add_middleware(TrustedHostMiddleware, allowed_hosts=["*"])
 # ❌ REMOVED: HTTPSRedirectMiddleware (This was causing the loop!)
 
 # -- MOUNT ADMIN --
-admin = Admin(app, engine, authentication_backend=authentication_backend, title="NexoDynamix Admin")
+admin = Admin(
+    app,
+    engine,
+    authentication_backend=authentication_backend,
+    title="NexoDynamix Admin",
+    base_url="/sys-control"  # <--- Bots won't guess this!
+)
 admin.add_view(APIClientAdmin)
 
 
