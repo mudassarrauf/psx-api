@@ -276,3 +276,37 @@ async def get_latest_price(ticker: str):
     except Exception as e:
         print(f"Server Error: {e}")
         raise HTTPException(500, "Internal Server Error")
+
+
+@app.get("/api/intraday", dependencies=[Depends(get_api_key)])
+async def get_intraday_data(ticker: str):
+    """
+    Fetches the current day's tick data for charts.
+    """
+    try:
+        conn = await asyncpg.connect(MARKET_DB_DSN)
+        try:
+            # We fetch all trades for the ticker, sorted by time
+            rows = await conn.fetch(
+                """
+                SELECT trade_time, price, volume 
+                FROM trades 
+                WHERE ticker = $1 
+                ORDER BY trade_time ASC
+                """,
+                ticker
+            )
+
+            # Format as a clean list of lists [time, price, vol] for charts
+            data = [[r['trade_time'], float(r['price']), r['volume']] for r in rows]
+
+            return {
+                "ticker": ticker,
+                "count": len(data),
+                "data": data
+            }
+        finally:
+            await conn.close()
+    except Exception as e:
+        print(f"Intraday Error: {e}")
+        raise HTTPException(500, "Internal Server Error")
